@@ -1,0 +1,451 @@
+---
+title: "Empirical Lens"
+author: "Mark White"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+
+# Setup 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, warnings=F,fig.width = 8,fig.height=8)
+require(tidyverse)
+# require(QCA)
+require(corrplot)
+require(knitr)
+require(kableExtra)
+require(igraph)
+require(igraph)
+library(RColorBrewer)
+source('~/DefaultScriptMark.R', echo=F )
+SpAgr <- function(x,y) sum((x==1) & (y==1))/sum((x==1) | (y==1))
+AgrX  <- function(x,y) sum((x==1) & (y==1))/sum((x==1))
+```
+
+# Load Data
+
+```{r cars}
+Math <- read.csv2("Math_EvidenceSheets.csv")
+Math %>% mutate(TalkTurn=1:n()) %>% group_by(TalkTurn) %>% 
+  group_modify(~{
+    bind_rows(data.frame(Rubric="PLATO",Code=strsplit(.x$PLATO,"\n") %>% unlist %>% stringr::str_trim() %>% c("***")),
+              data.frame(Rubric="JAD"  ,Code=strsplit(.x$JAD_Micro,"\n|/") %>% unlist %>% stringr::str_trim() %>% c("***")),
+              # data.frame(Rubric="JAD"  ,Code=strsplit(.x$JAD_Macro,"\n") %>% unlist %>% stringr::str_trim()  %>% c("***")),
+              # data.frame(Rubric="JAD"  ,Code=strsplit(.x$JAD_MESO,"\n") %>% unlist %>% stringr::str_trim() %>% c("***")),
+              data.frame(Rubric="ICALT",Code=strsplit(.x$ICALT,"\n") %>% unlist %>% stringr::str_trim() %>% substr(1,5) %>% c("***") ) )
+    }) %>% filter(Code!="***") %>%
+  # with(table(Code)) %>% names %>% sort
+  mutate(value=1,Subject="Math",Code=paste.(Rubric,Code)) %>% select(-Rubric) %>%
+  mutate(Code=case_when(Code %in% c("JAD.Anticipating","JAD.Anticipate","JAD.Remind","JAD.Recall") ~ "JAD.RecallAnticipate",
+                        Code %in% c("JAD.Challenge","JAD.Relaunch","JAD.Reorient") ~ "JAD.RedefineReorient",
+                        Code %in% c("JAD.Confirm","JAD.Further","JAD.Rebuild","JAD.Echoes") ~ "JAD.ConfirmRebuild",
+                        T ~ char(Code)) ) %>% 
+  mutate(Code=case_when(Code %in% c("JAD.LGoal - Anticipation"      ) ~ "JAD.1.1.1.LGoalAnt",
+                        Code %in% c("JAD.LGoal - Implicit"          ) ~ "JAD.1.1.2.LGoalImp",
+                        Code %in% c("JAD.LGoal - Uncertainty"       ) ~ "JAD.1.1.3.LGoalUnc",
+                        Code %in% c("JAD.Epist - Social practice"   ) ~ "JAD.1.2.1.EpistSocpr",
+                        Code %in% c("JAD.Epist - Teaching-tradition") ~ "JAD.1.2.2.EpistTrad",
+                        Code %in% c("JAD.Epist - Indeterminate"     ) ~ "JAD.1.2.3.EpistInd",
+                        Code %in% c("JAD.Milieu - Previous"        ) ~ "JAD.2.1.1.MilieuPrev",
+                        Code %in% c("JAD.Milieu - Support"         ) ~ "JAD.2.1.2.MilieuSupp",
+                        Code %in% c("JAD.Milieu - Progression"     ) ~ "JAD.2.1.3.MilieuProg",
+                        Code %in% c("JAD.Milieu - Implicit"        ) ~ "JAD.2.1.4.MilieuImpl",
+                        Code %in% c("JAD.Milieu - Stagnation"      ) ~ "JAD.2.1.5.MilieuStag",
+                        Code %in% c("JAD.Purpose - Previous"       ) ~ "JAD.2.2.1.PurposePrev",
+                        Code %in% c("JAD.Purpose - Implicit"       ) ~ "JAD.2.2.2.PurposeImpl",
+                        Code %in% c("JAD.Purpose - Elicitation"    ) ~ "JAD.2.2.3.PurposeElic",
+                        Code %in% c("JAD.Purpose - Breach"         ) ~ "JAD.2.2.4.PurposeBrch",
+                        Code %in% c("JAD.Purpose - Uncertainty"    ) ~ "JAD.2.2.5.PurposeUnc",
+                        # Code %in% c("JAD.Resp - Collective"        ) ~ "JAD.2.3.1.",
+                        # Code %in% c("JAD.Resp - Ind.group"         ) ~ "JAD.2.3.2.",
+                        # Code %in% c("JAD.Resp - Dual"              ) ~ "JAD.2.3.3.",
+                        # Code %in% c("JAD.Resp - Peer to peer"      ) ~ "JAD.2.3.4.",
+                        # Code %in% c("JAD.Resp - Demo"              ) ~ "JAD.2.3.5.",
+                        Code %in% c("JAD.Input"           ) ~ "JAD.3.1.1.Input",
+                        Code %in% c("JAD.Rule"            ) ~ "JAD.3.1.2.Rule",
+                        Code %in% c("JAD.RRelation"       ) ~ "JAD.3.1.3.RRelation",
+                        Code %in% c("JAD.nRRelation"      ) ~ "JAD.3.1.4.nRRelation",
+                        Code %in% c("JAD.Contradiction"   ) ~ "JAD.3.1.5.Contradiction",
+                        Code %in% c("JAD.T Dominating"    ) ~ "JAD.3.2.1.Dominating",
+                        Code %in% c("JAD.T Accompanying"  ) ~ "JAD.3.2.2.Accompanying",
+                        Code %in% c("JAD.T Distancing"    ) ~ "JAD.3.2.3.Distancing",
+                        Code %in% c("JAD.S- High position","JAD.S-High position","JAD.T Delegating") ~ "JAD.3.2.4.Delegating",
+                        Code %in% c("JAD.S disengaged"    ) ~ "JAD.3.2.5.StDisengaged",
+                        Code %in% c("JAD.RecallAnticipate") ~ "JAD.3.3.1.RecallAnticipate",
+                        Code %in% c("JAD.RedefineReorient") ~ "JAD.3.3.2.RedefineReorient",
+                        Code %in% c("JAD.ConfirmRebuild"  ) ~ "JAD.3.3.3.ConfirmRebuild",
+                        Code %in% c("JAD.noCM"            ) ~ "JAD.3.3.4.noCM",
+                        T ~ char(Code)) ) %>% 
+  # with(table(Code)) %>% names %>% grep("JAD",.,value=T)
+  unique -> Math
+```
+
+```{r loadLA}
+LA <- read.csv2("LA_EvidenceSheets.csv")
+LA$JAD_Macro<- char(LA$JAD_Macro)
+LA %>% mutate(TalkTurn=1:n()) %>% group_by(TalkTurn) %>% 
+  group_modify(~{
+    bind_rows(data.frame(Rubric="PLATO",Code=strsplit(.x$PLATO,"\n") %>% unlist %>% stringr::str_trim() %>% c("***") %>% gsub(": 1|: 0","",.) ),
+              data.frame(Rubric="JAD"  ,Code=strsplit(.x$JAD_Micro,"\n|/") %>% unlist %>% stringr::str_trim() %>% c("***")),
+              data.frame(Rubric="JAD"  ,Code=strsplit(.x$JAD_Macro,"\n") %>% unlist %>% stringr::str_trim()  %>% c("***")),
+              data.frame(Rubric="JAD"  ,Code=strsplit(.x$JAD_MESO,"\n") %>% unlist %>% stringr::str_trim() %>% c("***")),
+              data.frame(Rubric="ICALT",Code=strsplit(.x$ICALT,"\n") %>% unlist %>% stringr::str_trim() %>% substr(1,5) %>% c("***") ) )
+    }) %>% filter(Code!="***") %>%
+  # with(table(Code)) %>% names %>% sort
+  mutate(value=1,Subject="LA",Code=paste.(Rubric,Code)) %>% select(-Rubric) %>%
+  mutate(Code=case_when(Code %in% c("JAD.Anticipate","JAD.Anticipating","JAD.Remind","JAD.Recall") ~ "JAD.RecallAnticipate",
+                        Code %in% c("JAD.Challenge","JAD.Relaunch","JAD.Reorient") ~ "JAD.RedefineReorient",
+                        Code %in% c("JAD.Confirm","JAD.Further","JAD.Rebuild","JAD.Echoes") ~ "JAD.ConfirmRebuild",
+                        T ~ char(Code)) ) %>% 
+  mutate(Code=case_when(Code %in% c("JAD.LGoal - Anticipation"      ) ~ "JAD.1.1.1.LGoalAnt",
+                        Code %in% c("JAD.LGoal - Implicit"          ) ~ "JAD.1.1.2.LGoalImp",
+                        Code %in% c("JAD.LGoal - Uncertainty"       ) ~ "JAD.1.1.3.LGoalUnc",
+                        Code %in% c("JAD.Epist - Social practice"   ) ~ "JAD.1.2.1.EpistSocpr",
+                        Code %in% c("JAD.Epist - Teaching-tradition") ~ "JAD.1.2.2.EpistTrad",
+                        Code %in% c("JAD.Epist - Indeterminate"     ) ~ "JAD.1.2.3.EpistInd",
+                        Code %in% c("JAD.Milieu - Previous"        ) ~ "JAD.2.1.1.MilieuPrev",
+                        Code %in% c("JAD.Milieu - Support"         ) ~ "JAD.2.1.2.MilieuSupp",
+                        Code %in% c("JAD.Milieu - Progression"     ) ~ "JAD.2.1.3.MilieuProg",
+                        Code %in% c("JAD.Milieu - Implicit"        ) ~ "JAD.2.1.4.MilieuImpl",
+                        Code %in% c("JAD.Milieu - Stagnation"      ) ~ "JAD.2.1.5.MilieuStag",
+                        Code %in% c("JAD.Purpose - Previous"       ) ~ "JAD.2.2.1.PurposePrev",
+                        Code %in% c("JAD.Purpose - Implicit"       ) ~ "JAD.2.2.2.PurposeImpl",
+                        Code %in% c("JAD.Purpose - Elicitation"    ) ~ "JAD.2.2.3.PurposeElic",
+                        Code %in% c("JAD.Purpose - Breach"         ) ~ "JAD.2.2.4.PurposeBrch",
+                        Code %in% c("JAD.Purpose - Uncertainty"    ) ~ "JAD.2.2.5.PurposeUnc",
+                        # Code %in% c("JAD.Resp - Collective"        ) ~ "JAD.2.3.1.",
+                        # Code %in% c("JAD.Resp - Ind.group"         ) ~ "JAD.2.3.2.",
+                        # Code %in% c("JAD.Resp - Dual"              ) ~ "JAD.2.3.3.",
+                        # Code %in% c("JAD.Resp - Peer to peer"      ) ~ "JAD.2.3.4.",
+                        # Code %in% c("JAD.Resp - Demo"              ) ~ "JAD.2.3.5.",
+                        Code %in% c("JAD.Input"           ) ~ "JAD.3.1.1.Input",
+                        Code %in% c("JAD.Rule"            ) ~ "JAD.3.1.2.Rule",
+                        Code %in% c("JAD.RRelation"       ) ~ "JAD.3.1.3.RRelation",
+                        Code %in% c("JAD.nRRelation"      ) ~ "JAD.3.1.4.nRRelation",
+                        Code %in% c("JAD.Contradiction"   ) ~ "JAD.3.1.5.Contradiction",
+                        Code %in% c("JAD.T Dominating"    ) ~ "JAD.3.2.1.Dominating",
+                        Code %in% c("JAD.T Accompanying"  ) ~ "JAD.3.2.2.Accompanying",
+                        Code %in% c("JAD.T Distancing"    ) ~ "JAD.3.2.3.Distancing",
+                        Code %in% c("JAD.S- High position","JAD.S-High position") ~ "JAD.3.2.4.Delegating",
+                        Code %in% c("JAD.S disengaged"    ) ~ "JAD.3.2.5.StDisengaged",
+                        Code %in% c("JAD.RecallAnticipate") ~ "JAD.3.3.1.RecallAnticipate",
+                        Code %in% c("JAD.RedefineReorient") ~ "JAD.3.3.2.RedefineReorient",
+                        Code %in% c("JAD.ConfirmRebuild"  ) ~ "JAD.3.3.3.ConfirmRebuild",
+                        Code %in% c("JAD.noCM"            ) ~ "JAD.3.3.4.noCM",
+                        T ~ char(Code)) ) %>% 
+  unique  -> LA
+```
+
+# Make Network Graph for paper
+
+```{r cache=T}
+Constructs <- bind_rows(Math,LA)$Code %>% unique
+Sheet <- bind_rows(Math,LA)
+
+links <-data.frame(source=NULL,target=NULL,weight=NULL)
+for (i in 1:(length(Constructs)-1)) {
+  for (j in (i+1):length(Constructs) ) {
+    inx <- Sheet %>% filter(Code==Constructs[i]) %>% select(TalkTurn) %>% .[[1]]
+    iny <- Sheet %>% filter(Code==Constructs[j]) %>% select(TalkTurn) %>% .[[1]]
+    if (length(inx)>5 & length(iny)>5) { # if both constructs shows up more than 5 times
+      links <- bind_rows(links,
+                         data.frame(source=Constructs[i],target=Constructs[j],
+                                    weight=length(intersect(inx,iny))/length(union(inx,iny)) )
+                         )
+      }
+  }
+}
+```
+
+```{r}
+CvtNm <- function(x) sub("ICALT.","",x ,fixed=T) %>% 
+                   sub("PLATO.","",.,fixed=T) %>% 
+                   sub("JAD.3.1.1.","",.,fixed=T) %>% 
+                   sub("JAD.3.2.1.","",.,fixed=T) %>% 
+                   sub("JAD.3.3.4.","",.,fixed=T) %>% 
+                   sub("JAD.3.1.2.","",.,fixed=T) %>% 
+                   sub("JAD.3.3.1.","",.,fixed=T) %>% 
+                   sub("JAD.3.2.2.","",.,fixed=T) %>% 
+                   sub("JAD.3.1.4.","",.,fixed=T) %>% 
+                   sub("JAD.3.2.3.","",.,fixed=T) %>% 
+                   sub("JAD.3.3.2.","",.,fixed=T) %>% 
+                   sub("JAD.3.1.3.","",.,fixed=T) %>% 
+                   sub("JAD.3.3.3.","",.,fixed=T)
+links <- links %>% 
+  mutate(source=CvtNm(source)  ,
+         target=CvtNm(target) )
+
+nodes <- data.frame(name=Constructs) %>% 
+  mutate(Framework=case_when(grepl("PLATO",name)~"PLATO",
+                        grepl("JAD",name)~"JAD",
+                        grepl("ICALT",name)~"ICALT" ),
+         name=CvtNm(name)) %>%
+  filter(Framework!="JAD") %>% 
+  filter(name %in% union(links$source,links$target)) 
+
+links <- links %>% 
+  filter((source %in% nodes$name) & (target %in% nodes$name))
+
+```
+
+## Main Graph from paper
+
+```{r}
+network <- graph_from_data_frame(d=links  %>% filter(weight>0.1), vertices=nodes, directed=F) 
+coul  <- brewer.pal(3, "Set1") 
+ 
+# Create a vector of color
+my_color <- coul[as.numeric(as.factor(V(network)$Framework))]
+png("figure1.png",width=10,height=10,units="cm",res=500)
+plot(network, layout=layout.fruchterman.reingold,
+     vertex.color=my_color,
+     vertex.frame.color="white",
+     vertex.label.color="darkblue",
+     edge.width=E(network)$weight*10)
+
+legend("bottomright", legend=levels(as.factor(V(network)$Framework)), col = coul , bty = "n", pch=20 , pt.cex = 3, cex = 1, text.col=coul , horiz = FALSE, inset = c(0, 0))
+dev.off()
+```
+
+## Graph with No links dropped
+
+```{r}
+network <- graph_from_data_frame(d=links %>% filter(weight>0.0), vertices=nodes, directed=F) 
+coul  <- brewer.pal(3, "Set1") 
+ 
+# Create a vector of color
+my_color <- coul[as.numeric(as.factor(V(network)$Framework))]
+plot(network, layout=layout.fruchterman.reingold,
+     vertex.color=my_color,
+     vertex.frame.color="white",
+     vertex.label.color="darkblue",
+     edge.width=E(network)$weight*10)
+
+legend("bottomright", legend=levels(as.factor(V(network)$Framework)), col = coul , bty = "n", pch=20 , pt.cex = 3, cex = 1, text.col=coul , horiz = FALSE, inset = c(0, 0))
+```
+
+## Graph with No links less than 5 % specific agreement dropped
+
+```{r}
+network <- graph_from_data_frame(d=links %>% filter(weight>0.05), vertices=nodes, directed=F) 
+coul  <- brewer.pal(3, "Set1") 
+ 
+# Create a vector of color
+my_color <- coul[as.numeric(as.factor(V(network)$Framework))]
+plot(network, layout=layout.fruchterman.reingold,
+     vertex.color=my_color,
+     vertex.frame.color="white",
+     vertex.label.color="darkblue",
+     edge.width=E(network)$weight*10)
+
+legend("bottomright", legend=levels(as.factor(V(network)$Framework)), col = coul , bty = "n", pch=20 , pt.cex = 3, cex = 1, text.col=coul , horiz = FALSE, inset = c(0, 0))
+```
+
+
+# Make alternative Network Graph, dropping only those items with less than 2 uses
+
+```{r cache=T}
+Constructs <- bind_rows(Math,LA)$Code %>% unique
+Sheet <- bind_rows(Math,LA)
+
+links <-data.frame(source=NULL,target=NULL,weight=NULL)
+for (i in 1:(length(Constructs)-1)) {
+  for (j in (i+1):length(Constructs) ) {
+    inx <- Sheet %>% filter(Code==Constructs[i]) %>% select(TalkTurn) %>% .[[1]]
+    iny <- Sheet %>% filter(Code==Constructs[j]) %>% select(TalkTurn) %>% .[[1]]
+    if (length(inx)>1 & length(iny)>1) { # if both constructs shows up more than 2 times
+      links <- bind_rows(links,
+                         data.frame(source=Constructs[i],target=Constructs[j],
+                                    weight=length(intersect(inx,iny))/length(union(inx,iny)) )
+                         )
+      }
+  }
+}
+```
+
+```{r}
+CvtNm <- function(x) sub("ICALT.","",x ,fixed=T) %>% 
+                   sub("PLATO.","",.,fixed=T) %>% 
+                   sub("JAD.3.1.1.","",.,fixed=T) %>% 
+                   sub("JAD.3.2.1.","",.,fixed=T) %>% 
+                   sub("JAD.3.3.4.","",.,fixed=T) %>% 
+                   sub("JAD.3.1.2.","",.,fixed=T) %>% 
+                   sub("JAD.3.3.1.","",.,fixed=T) %>% 
+                   sub("JAD.3.2.2.","",.,fixed=T) %>% 
+                   sub("JAD.3.1.4.","",.,fixed=T) %>% 
+                   sub("JAD.3.2.3.","",.,fixed=T) %>% 
+                   sub("JAD.3.3.2.","",.,fixed=T) %>% 
+                   sub("JAD.3.1.3.","",.,fixed=T) %>% 
+                   sub("JAD.3.3.3.","",.,fixed=T)
+links <- links %>% 
+  mutate(source=CvtNm(source)  ,
+         target=CvtNm(target) )
+
+nodes <- data.frame(name=Constructs) %>% 
+  mutate(Framework=case_when(grepl("PLATO",name)~"PLATO",
+                        grepl("JAD",name)~"JAD",
+                        grepl("ICALT",name)~"ICALT" ),
+         name=CvtNm(name)) %>%
+  filter(Framework!="JAD") %>% 
+  filter(name %in% union(links$source,links$target)) 
+
+links <- links %>% 
+  filter((source %in% nodes$name) & (target %in% nodes$name))
+
+```
+
+## Main Graph with nodes that were scored more than once
+
+```{r}
+network <- graph_from_data_frame(d=links  %>% filter(weight>0.1), vertices=nodes, directed=F) 
+coul  <- brewer.pal(3, "Set1") 
+ 
+# Create a vector of color
+my_color <- coul[as.numeric(as.factor(V(network)$Framework))]
+plot(network, layout=layout.fruchterman.reingold,
+     vertex.color=my_color,
+     vertex.frame.color="white",
+     vertex.label.color="darkblue",
+     edge.width=E(network)$weight*10)
+
+legend("bottomright", legend=levels(as.factor(V(network)$Framework)), col = coul , bty = "n", pch=20 , pt.cex = 3, cex = 1, text.col=coul , horiz = FALSE, inset = c(0, 0))
+dev.off()
+```
+
+## Graph with No links dropped with nodes that were scored more than once
+
+```{r}
+network <- graph_from_data_frame(d=links  %>% filter(weight>0.0), vertices=nodes, directed=F) 
+coul  <- brewer.pal(3, "Set1") 
+ 
+# Create a vector of color
+my_color <- coul[as.numeric(as.factor(V(network)$Framework))]
+plot(network, layout=layout.fruchterman.reingold,
+     vertex.color=my_color,
+     vertex.frame.color="white",
+     vertex.label.color="darkblue",
+     edge.width=E(network)$weight*10)
+
+legend("bottomright", legend=levels(as.factor(V(network)$Framework)), col = coul , bty = "n", pch=20 , pt.cex = 3, cex = 1, text.col=coul , horiz = FALSE, inset = c(0, 0))
+```
+
+## Graph with No links less than 5 % specific agreement dropped with nodes that were scored more than once
+
+```{r}
+network <- graph_from_data_frame(d=links %>% filter(weight>0.05), vertices=nodes, directed=F) 
+coul  <- brewer.pal(3, "Set1") 
+ 
+# Create a vector of color
+my_color <- coul[as.numeric(as.factor(V(network)$Framework))]
+plot(network, layout=layout.fruchterman.reingold,
+     vertex.color=my_color,
+     vertex.frame.color="white",
+     vertex.label.color="darkblue",
+     edge.width=E(network)$weight*10)
+
+legend("bottomright", legend=levels(as.factor(V(network)$Framework)), col = coul , bty = "n", pch=20 , pt.cex = 3, cex = 1, text.col=coul , horiz = FALSE, inset = c(0, 0))
+```
+
+
+# Comparison of Each Manual to the Others in Bulk
+
+In the tables below, the relationship between manuals at the coarsest level is explored. Each talk turn is coded 1 if any evidence was gleaned from that talk turn and 0 if no evidence was gleaned. The contingency table across manuals for each talk turn is then shown. The tables generally show that much of the time, pairs of manuals are coding the same talk turns. A last table shows the counts for each possible combination of coded. Here, 31 talk turns were coded by all three manuals while 14 were coded by only JAD and ICALT. The findings generally show that, at the coarsest level, the manuals are typically referring to the same evidence, but each manual does refer to some unique evidence, except for PLATO.
+
+```{r}
+dat <- bind_rows(Math,LA) %>% ungroup %>% # with(table(Code)) %>% names %>% sort
+  mutate(Code=case_when(grepl("PLATO",Code)~"PLATO",
+                        grepl("JAD",Code)~"JAD",
+                        grepl("ICALT",Code)~"ICALT" )) %>% 
+  unique %>% 
+  spread(Code,value,fill=0)
+with(dat, table(ICALT,JAD))
+with(dat, table(ICALT,PLATO))
+with(dat, table(JAD,PLATO))
+
+dat %>% count(ICALT,JAD,PLATO)
+```
+
+The figures below are separated with one for each manual, taking the three manuals as the focus manual in turn. Each code used in the focal manual is shown in comparison to the other two manuals. The cells show the percentage of times that a given code was scored where the same talk-turn was scored by the other instruments. So for the PLATO code of BM, ICALT scored 100% of the talk turns that BM was scored. For Feedback, ICALT scored 83% of the talk turns where feedback was scored and JAD scored 91% of those talk turns. This gives an idea of where specific codes in an manual are capturing unique evidence that is not part of other manuals. 
+
+
+```{r}
+dat <- bind_rows(Math,LA) %>% ungroup %>% 
+  mutate(Code=case_when(grepl("PLATO",Code)~Code,
+                        grepl("JAD",Code)~"JAD",
+                        grepl("ICALT",Code)~"ICALT" )) %>% 
+  unique %>% spread(Code,value,fill=0) %>% 
+  select(-TalkTurn,-Subject)
+
+sapply(dat %>% select(-contains("PLATO")), function(y) sapply(dat %>% select(contains("PLATO")), AgrX, y = y)) %>%
+  corrplot(tl.srt=45,is.corr=F,col.lim=c(0,1), addCoef.col='black', cl.ratio = 1)
+
+sapply(dat %>% select(-contains("PLATO")), function(y) sapply(dat %>% select(contains("PLATO")), AgrX, y = y)) %>% as.data.frame %>% rownames_to_column("Element") %>% merge(data.frame(N=dat %>% select(contains("PLATO")) %>% colSums) %>% rownames_to_column("Element") )%>% knitr::kable(caption="Frequency of codes")%>%
+  kable_styling(latex_options = "hold_position")
+
+dat <- bind_rows(Math,LA) %>% ungroup %>% 
+  mutate(Code=case_when(grepl("JAD",Code)~Code,
+                        grepl("PLATO",Code)~"PLATO",
+                        grepl("ICALT",Code)~"ICALT" )) %>% 
+  unique %>% spread(Code,value,fill=0) %>% 
+  select(-TalkTurn,-Subject)
+sapply(dat %>% select(-contains("JAD")), function(y) sapply(dat %>% select(contains("JAD")), AgrX, y = y)) %>%
+  corrplot(tl.srt=45,is.corr=F,col.lim=c(0,1),
+           addCoef.col='black',tl.cex=0.8,number.cex=0.5, cl.ratio = 1)
+
+sapply(dat %>% select(-contains("JAD")), function(y) sapply(dat %>% select(contains("JAD")), AgrX, y = y)) %>% as.data.frame %>% rownames_to_column("Element") %>% merge(data.frame(N=dat %>% select(contains("JAD")) %>% colSums) %>% rownames_to_column("Element") )%>% knitr::kable(caption="Frequency of codes")%>%
+  kable_styling(latex_options = "hold_position")
+
+
+dat <- bind_rows(Math,LA) %>% ungroup %>% 
+  mutate(Code=case_when(grepl("ICALT",Code)~Code,
+                        grepl("PLATO",Code)~"PLATO",
+                        grepl("JAD",Code)~"JAD" )) %>% 
+  unique %>% spread(Code,value,fill=0) %>% 
+  select(-TalkTurn,-Subject)
+sapply(dat %>% select(-contains("ICALT")), function(y) sapply(dat %>% select(contains("ICALT")), AgrX, y = y)) %>%
+  corrplot(tl.srt=45,is.corr=F,
+           addCoef.col='black',tl.cex=0.75,number.cex=0.5, cl.ratio = 1)
+
+sapply(dat %>% select(-contains("ICALT")), function(y) sapply(dat %>% select(contains("ICALT")), AgrX, y = y)) %>% as.data.frame %>% rownames_to_column("Element") %>% merge(data.frame(N=dat %>% select(contains("ICALT")) %>% colSums) %>% rownames_to_column("Element") ) %>% knitr::kable(caption="Frequency of codes")%>%
+  kable_styling(latex_options = "hold_position")
+
+```
+
+## Agreement at the Item Level
+
+The figures below show the same sorts of information as the previous figures, but at the code level. Here, I show the specific agreement, which does not privilege any given instrument. For example, with PLATO and JAD, of the talk-turns where either CCMIlieu or PLATO IC were coded, 17% are coded by both codes. High numbers here mean that the codes are highly convergent (at least in what evidence they use to generate conclusions). Low numbers mean that codes are divergent.
+
+```{r}
+dat <- bind_rows(Math,LA) %>% ungroup %>% # with(table(Code)) %>% names %>% sort
+  spread(Code,value,fill=0) %>% select(-TalkTurn,-Subject)
+
+
+sapply(dat %>% select(contains("PLATO")), function(y) sapply(dat %>% select(contains("JAD")), SpAgr, y = y)) %>%
+  corrplot(tl.srt=45,is.corr=F,addCoef.col='grey30',tl.cex=0.8,number.cex=0.4)
+
+dat %>% select(contains("PLATO"),contains("JAD")) %>% gather(PLATO,PLATO.val,PLATO.BM:PLATO.Uptake) %>%
+  gather(JAD,JAD.val,-contains("PLATO")) %>% mutate(val=1*(PLATO.val|JAD.val)) %>% 
+  group_by(PLATO,JAD) %>% summarize(val=sum(val)) %>% knitr::kable(caption="Frequency of pairs of codes")%>%
+  kable_styling(latex_options = "hold_position")
+
+
+sapply(dat %>% select(contains("PLATO")), function(y) sapply(dat %>% select(contains("ICALT")), SpAgr, y = y)) %>%
+  corrplot(tl.srt=45,is.corr=F,addCoef.col='grey30',tl.cex=0.8,number.cex=0.4)
+
+dat %>% select(contains("PLATO"),contains("ICALT")) %>% gather(PLATO,PLATO.val,PLATO.BM:PLATO.Uptake) %>% 
+  gather(ICALT,ICALT.val,ICALT.D1.I1:ICALT.D6.I2) %>% mutate(val=1*(PLATO.val|ICALT.val)) %>% 
+  group_by(PLATO,ICALT) %>% summarize(val=sum(val)) %>% knitr::kable(caption="Frequency of pairs of codes")%>%
+  kable_styling(latex_options = "hold_position")
+
+
+
+sapply(dat %>% select(contains("ICALT")), function(y) sapply(dat %>% select(contains("JAD")), SpAgr, y = y)) %>%
+  corrplot(tl.srt=45,is.corr=F,addCoef.col='grey30',tl.cex=0.8,number.cex=0.4)
+
+dat %>% select(contains("JAD"),contains("ICALT")) %>% gather(JAD,JAD.val,-contains("ICALT")) %>% 
+  gather(ICALT,ICALT.val,ICALT.D1.I1:ICALT.D6.I2) %>% mutate(val=1*(JAD.val|ICALT.val)) %>% 
+  group_by(JAD,ICALT) %>% summarize(val=sum(val)) %>% knitr::kable(caption="Frequency of pairs of codes")%>%
+  kable_styling(latex_options = "hold_position")
+
+```
